@@ -11,11 +11,22 @@ Expected tensor shapes per batch:
 Usage:
     python train.py
 
-Quick-start configs for the paper's benchmarks:
+Benchmark configs (hyperparameters matched to paper's reported parameter counts):
 
-    Darcy flow  (21×21 grid)    N_spatial=441, d_field=1, d_f=1, n_steps=5
-    Navier-Stokes (30×30 grid)  N_spatial=900, d_field=1, d_f=1, n_steps=5
-    Lorenz system               N_spatial=3,   d_field=1, d_f=1, n_steps=5
+    Darcy flow  (21×21, ~760K params)
+        N_spatial=441, d_field=1, d_f=1, n_steps=5
+        d_embed=128, n_heads=4, n_layers_te=3
+        d_k=32, d_model_nao=256, n_layers_nao=2
+
+    Navier-Stokes (30×30, ~4.66M params)
+        N_spatial=900, d_field=1, d_f=1, n_steps=5
+        d_embed=384, n_heads=4, n_layers_te=2
+        d_k=128, d_model_nao=320, n_layers_nao=4
+
+    Lorenz system (~258K params)
+        N_spatial=3, d_field=1, d_f=1, n_steps=5
+        d_embed=96, n_heads=2, n_layers_te=2
+        d_k=32, d_model_nao=256, n_layers_nao=1
 """
 
 import torch
@@ -39,12 +50,12 @@ CONFIG = {
     # ── Transformer Encoder (explicit / temporal step) ────────────────────────
     "d_embed": 128,         # embedding dimension
     "n_heads": 4,           # attention heads  (d_embed must be divisible)
-    "n_layers_te": 2,       # encoder depth
+    "n_layers_te": 3,       # encoder depth
 
     # ── Nonlocal Attention Operator (implicit / spatial step) ─────────────────
-    "d_k": 64,              # query/key dimension
-    "d_model_nao": 128,     # NAO internal model dimension
-    "n_layers_nao": 3,      # iterative attention layers (T in paper)
+    "d_k": 32,              # query/key dimension
+    "d_model_nao": 256,     # NAO internal model dimension
+    "n_layers_nao": 2,      # iterative attention layers (T in paper)
 
     # ── Regularisation ────────────────────────────────────────────────────────
     "dropout": 0.1,

@@ -29,11 +29,15 @@ Benchmark configs (hyperparameters matched to paper's reported parameter counts)
         d_k=32, d_model_nao=256, n_layers_nao=1
 """
 
+import argparse
+from pathlib import Path
+
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader
 
 from asno import ASNO
+from asno.data import inspect_hdf5, load_pdebench
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -172,10 +176,67 @@ def eval_epoch(
 # ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Train ASNO on a PDEBench dataset.")
+    p.add_argument("--data_dir",  type=str, default="./data",
+                   help="Directory containing HDF5 dataset files.")
+    p.add_argument("--dataset",   type=str, required=True,
+                   help="Filename inside data_dir, e.g. 1D_Burgers_Sols_Nu0.1.hdf5")
+    p.add_argument("--n_traj",    type=int, default=200,
+                   help="Number of trajectories to load (default: 200).")
+    p.add_argument("--spatial_subsample", type=int, default=1,
+                   help="Keep every n-th spatial point (default: 1 = no subsampling).")
+    p.add_argument("--inspect",   action="store_true",
+                   help="Print HDF5 file structure and exit.")
+    # Optional CONFIG overrides
+    p.add_argument("--n_steps",   type=int,   default=None)
+    p.add_argument("--n_epochs",  type=int,   default=None)
+    p.add_argument("--batch_size",type=int,   default=None)
+    p.add_argument("--lr",        type=float, default=None)
+    p.add_argument("--checkpoint_path", type=str, default=None)
+    return p.parse_args()
+
+
 def main():
-    cfg    = CONFIG
+    args   = _parse_args()
+    cfg    = dict(CONFIG)   # copy so we can mutate
+
+    # Apply CLI overrides
+    for key in ("n_steps", "n_epochs", "batch_size", "lr", "checkpoint_path"):
+        val = getattr(args, key)
+        if val is not None:
+            cfg[key] = val
+
+    data_path = Path(args.data_dir) / args.dataset
+
+    if args.inspect:
+        inspect_hdf5(str(data_path))
+        return
+
     device = torch.device(cfg["device"])
     print(f"Device: {device}")
+
+    # ── Dataset ───────────────────────────────────────────────────────────────
+    print(f"Loading dataset: {data_path}")
+    train_ds, test_ds, data_info = load_pdebench(
+        path             = str(data_path),
+        n_steps          = cfg["n_steps"],
+        train_frac       = 0.8,
+        n_traj           = args.n_traj,
+        spatial_subsample= args.spatial_subsample,
+    )
+
+    # Override model dimensions to match the loaded data
+    cfg["N_spatial"] = data_info["N_spatial"]
+    cfg["d_field"]   = data_info["d_field"]
+    cfg["d_f"]       = data_info["d_f"]
+
+    train_loader = DataLoader(
+        train_ds, batch_size=cfg["batch_size"], shuffle=True,  pin_memory=True,
+    )
+    test_loader = DataLoader(
+        test_ds,  batch_size=cfg["batch_size"], shuffle=False, pin_memory=True,
+    )
 
     # ── Build model ───────────────────────────────────────────────────────────
     model = ASNO(
@@ -194,42 +255,6 @@ def main():
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Trainable parameters: {n_params:,}")
-
-    # ── Dataset ───────────────────────────────────────────────────────────────
-    # Replace this block with your actual data loading.
-    #
-    # Expected shapes:
-    #   x_seq  : (N_samples, n_steps, N_spatial, d_field)
-    #   f_next : (N_samples, N_spatial, d_f)
-    #   x_next : (N_samples, N_spatial, d_field)
-    #
-    # For Darcy flow (paper Section 4.1):
-    #   100 profiles × 96 windows × 20 permutations = 192 000 samples
-    #   80:20 train/test split
-    #   → N_train = 153 600,  N_test = 38 400
-
-    N      = cfg["N_spatial"]
-    ns     = cfg["n_steps"]
-    df     = cfg["d_field"]
-    dff    = cfg["d_f"]
-    N_tr, N_te = 1000, 200   # placeholder sizes
-
-    x_seq_tr  = torch.randn(N_tr, ns, N, df)
-    f_next_tr = torch.randn(N_tr, N, dff)
-    x_next_tr = torch.randn(N_tr, N, df)
-
-    x_seq_te  = torch.randn(N_te, ns, N, df)
-    f_next_te = torch.randn(N_te, N, dff)
-    x_next_te = torch.randn(N_te, N, df)
-
-    train_loader = DataLoader(
-        TensorDataset(x_seq_tr, f_next_tr, x_next_tr),
-        batch_size=cfg["batch_size"], shuffle=True, pin_memory=True,
-    )
-    test_loader = DataLoader(
-        TensorDataset(x_seq_te, f_next_te, x_next_te),
-        batch_size=cfg["batch_size"], shuffle=False, pin_memory=True,
-    )
 
     # ── Optimiser + scheduler ──────────────────────────────────────────────────
     optimizer = torch.optim.AdamW(

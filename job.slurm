@@ -12,9 +12,6 @@
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=gm3460@princeton.edu
 
-# ── Environment ───────────────────────────────────────────────────────────────
-module purge
-module load anaconda3/2025.12
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 cd /home/ec9834/SSNO_New

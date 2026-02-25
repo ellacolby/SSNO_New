@@ -130,17 +130,20 @@ def _load_raw(
             u = u[:, :, ::spatial_subsample, :]
             return u, None
 
-        # ── 2D Darcy: nu (permeability) + u (pressure) ────────────────────────
-        if "nu" in keys and "u" in keys:
-            sl = slice(None, n_traj)
-            nu = hf["nu"][sl]                  # (N, Nx, Ny)
-            u  = hf["u"][sl]
-            if u.ndim == 3:
-                nu, u = nu[..., None], u[..., None]
-            N, Nx, Ny, d = u.shape
-            u  = u.reshape(N, Nx * Ny, d)[:, ::spatial_subsample, :]
-            nu = nu.reshape(N, Nx * Ny, d)[:, ::spatial_subsample, :]
-            return u, nu                       # steady-state: (N, N_spatial, d)
+        # ── 2D Darcy: nu (permeability) + u or tensor (pressure) ─────────────
+        sol_key = "u" if "u" in keys else ("tensor" if "tensor" in keys else None)
+        if "nu" in keys and sol_key is not None:
+            sl  = slice(None, n_traj)
+            nu  = hf["nu"][sl]                 # (N, Nx, Ny)
+            sol = hf[sol_key][sl]              # (N, Nx, Ny) or (N, 1, Nx, Ny)
+            if sol.ndim == 4:
+                sol = sol.squeeze(1)           # drop dummy time dim → (N, Nx, Ny)
+            if sol.ndim == 3:
+                nu, sol = nu[..., None], sol[..., None]
+            N, Nx, Ny, d = sol.shape
+            sol = sol.reshape(N, Nx * Ny, d)[:, ::spatial_subsample, :]
+            nu  = nu.reshape(N, Nx * Ny, d)[:, ::spatial_subsample, :]
+            return sol, nu                     # steady-state: (N, N_spatial, d)
 
         # ── Multi-field time-dependent: u + v (diff-react, rdb) ───────────────
         if "u" in keys and "v" in keys:

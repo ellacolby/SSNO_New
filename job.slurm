@@ -10,7 +10,7 @@
 #SBATCH --output=logs/slurm-%j.out
 #SBATCH --error=logs/slurm-%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
-#SBATCH --mail-user=gm3460@princeton.edu
+#SBATCH --mail-user=ec9834@princeton.edu
 
 
 # ── Run ───────────────────────────────────────────────────────────────────────

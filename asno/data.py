@@ -13,6 +13,8 @@ Supports the standard PDEBench dataset formats:
                     /u   shape (N, Nx, Ny)   — pressure (solution)
 """
 
+from __future__ import annotations
+
 import h5py
 import numpy as np
 import torch

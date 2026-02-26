@@ -198,7 +198,11 @@ def _windows_timedep(
     if f is not None:
         f_nexts = f[:, n_steps:].reshape(-1, N_spatial, d).astype(np.float32)
     else:
-        f_nexts = np.zeros((N_traj * T_win, N_spatial, 1), dtype=np.float32)
+        # No external forcing: use the last observed state in each window as
+        # the NAO forcing field.  X_out = K @ F, so F must be nonzero for the
+        # model to produce any nonzero prediction.  X_m is the natural choice —
+        # it encodes the current spatial structure driving the implicit correction.
+        f_nexts = u[:, n_steps - 1 : N_t - 1].reshape(-1, N_spatial, d).astype(np.float32)
 
     return x_seqs, f_nexts, x_nexts
 

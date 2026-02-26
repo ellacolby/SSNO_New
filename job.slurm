@@ -19,3 +19,5 @@ cd /home/ec9834/SSNO_New
 python train.py \
     --dataset 1D_Burgers_Sols_Nu0.001.hdf5 \
     --n_traj 200 \
+    --spatial_subsample 4 \
+    --n_epochs 50

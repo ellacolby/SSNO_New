@@ -17,7 +17,6 @@
 cd /home/ec9834/SSNO_New
 
 python train.py \
-    --dataset 2D_DarcyFlow_beta1.0_Train.hdf5 \
-    --n_traj 5000 \
-    --n_epochs 200 \
-    --spatial_subsample 2
+    --dataset 1D_Burgers_Sols_Nu0.001.hdf5 \
+    --n_traj 200 \
+    --n_epochs 50 \

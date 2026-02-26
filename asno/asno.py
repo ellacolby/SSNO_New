@@ -84,10 +84,12 @@ class ASNO(nn.Module):
         )
 
         # ── Implicit BDF step: Nonlocal Attention Operator ────────────────────
-        # The TE output H is reshaped to (batch, N_spatial, d_field) before
-        # being fed to NAO, so d_h = d_field.
+        # NAO receives cat(H, y_init) where H is the TE extrapolation and
+        # y_init = x_seq[:, -1] is the most recent observed state — matching
+        # the original code's y_init concatenation before the NAO forward pass.
+        # Both have d_field features per spatial point → d_h = d_field * 2.
         self.nao = NAO(
-            d_h=d_field,
+            d_h=d_field * 2,
             d_f=d_f,
             d_k=d_k,
             d_model=d_model_nao,
@@ -123,8 +125,16 @@ class ASNO(nn.Module):
         H_flat = self.te(x_flat)                            # (batch, d_state)
         H = H_flat.view(batch, self.N_spatial, self.d_field)  # (batch, N, d_field)
 
+        # ── y_init: most recent observed state (matches original code) ────────
+        # x_seq[:, -1] is X_m — the last step in the history window.
+        y_init = x_seq.reshape(batch, self.n_steps, self.N_spatial, self.d_field)[:, -1]
+        # (batch, N_spatial, d_field)
+
+        # Concatenate TE extrapolation with current state along feature dim
+        H_aug = torch.cat([H, y_init], dim=-1)   # (batch, N_spatial, d_field * 2)
+
         # ── Implicit step: spatial correction via NAO ─────────────────────────
-        X_out = self.nao(H, f_next)   # (batch, N_spatial, d_field)
+        X_out = self.nao(H_aug, f_next)   # (batch, N_spatial, d_field)
 
         return X_out
 

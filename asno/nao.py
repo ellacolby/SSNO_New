@@ -1,6 +1,7 @@
 import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class NAOLayer(nn.Module):
@@ -46,9 +47,10 @@ class NAOLayer(nn.Module):
         Q = self.W_Q(J)   # (batch, N, d_k)
         K = self.W_K(J)   # (batch, N, d_k)
 
-        # Linear (non-softmax) N × N attention matrix: σ(Q K^T / √d_k)
-        # where σ = identity  (Eq. 10)
-        A = (Q @ K.transpose(-1, -2)) / math.sqrt(self.d_k)   # (batch, N, N)
+        # Softmax N × N attention matrix (matches original code behaviour)
+        A = F.softmax(
+            (Q @ K.transpose(-1, -2)) / math.sqrt(self.d_k), dim=-1
+        )   # (batch, N, N)
 
         # Nonlocal aggregation with residual
         J_new = A @ J + J   # (batch, N, d_model)

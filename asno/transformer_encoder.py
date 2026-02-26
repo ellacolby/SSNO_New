@@ -1,8 +1,5 @@
-import math
 import torch
 import torch.nn as nn
-
-from .utils import PositionalEncoding
 
 
 class TransformerEncoder(nn.Module):
@@ -22,7 +19,7 @@ class TransformerEncoder(nn.Module):
     Architecture
     ------------
     1. Linear embedding  :  X_t ∈ R^{d_state}  →  E_t ∈ R^{d_embed}
-    2. Positional encoding added to E_t (sinusoidal).
+    2. Positional encoding added to E_t (learnable, matches original code).
     3. L-layer standard Transformer Encoder (bidirectional self-attention +
        feed-forward sub-layers).
     4. Output at the *last temporal position* is projected back to R^{d_state}
@@ -55,9 +52,11 @@ class TransformerEncoder(nn.Module):
         # W_E in R^{d_state × d_embed}  (Eq. 2 of paper)
         self.embedding = nn.Linear(d_state, d_embed)
 
-        self.pos_encoding = PositionalEncoding(
-            d_model=d_embed, dropout=dropout, max_len=n_steps + 1
-        )
+        # Learnable positional encoding: shape (1, n_steps, d_embed).
+        # Initialised to zeros and trained jointly — matches the original code.
+        self.pos_encoding = nn.Parameter(torch.zeros(1, n_steps, d_embed))
+
+        self.dropout = nn.Dropout(p=dropout)
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_embed,
@@ -88,7 +87,7 @@ class TransformerEncoder(nn.Module):
         """
         # (batch, n_steps, d_state) → (batch, n_steps, d_embed)
         E = self.embedding(x_seq)
-        E = self.pos_encoding(E)
+        E = self.dropout(E + self.pos_encoding)   # broadcast over batch
 
         # Bidirectional self-attention over the temporal sequence
         out = self.transformer(E)   # (batch, n_steps, d_embed)

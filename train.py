@@ -65,10 +65,15 @@ CONFIG = {
     "dropout": 0.1,
 
     # ── Optimisation ──────────────────────────────────────────────────────────
-    "lr": 1e-3,
-    "weight_decay": 1e-4,
-    "batch_size": 32,
-    "n_epochs": 100,
+    # Defaults match the original Darcy training script.
+    # Lorenz: lr=1e-2, weight_decay=1e-5, n_epochs=10000
+    # AM:     lr=3e-4, weight_decay=1e-2
+    "lr": 3e-3,
+    "weight_decay": 1e-2,
+    "batch_size": 100,
+    "n_epochs": 1000,
+    "lr_step_size": 100,    # decay LR every this many epochs
+    "lr_gamma": 0.7,        # multiplicative decay factor
     "grad_clip": 1.0,       # max gradient norm (0 = disabled)
 
     # ── Misc ──────────────────────────────────────────────────────────────────
@@ -80,16 +85,11 @@ CONFIG = {
 # ─────────────────────────────────────────────────────────────────────────────
 # Loss
 # ─────────────────────────────────────────────────────────────────────────────
-def relative_l2_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    """
-    Mean relative L² loss over the batch, averaged across spatial nodes and
-    fields.  Matches the L² error used in neural-operator benchmarks.
+_mse = nn.MSELoss()
 
-        L = mean_batch( ||pred - target||_2  /  (||target||_2 + ε) )
-    """
-    diff_norm   = torch.norm(pred   - target, dim=(-2, -1))   # (batch,)
-    target_norm = torch.norm(target,          dim=(-2, -1))   # (batch,)
-    return torch.mean(diff_norm / (target_norm + 1e-8))
+def loss_fn(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """MSELoss — matches the original ASNO training code."""
+    return _mse(pred, target)
 
 
 def cumulative_l2_error(
@@ -144,7 +144,7 @@ def train_epoch(
 
         optimizer.zero_grad()
         pred = model(x_seq, f_next)
-        loss = relative_l2_loss(pred, x_next)
+        loss = loss_fn(pred, x_next)
         loss.backward()
 
         if grad_clip > 0:
@@ -169,7 +169,7 @@ def eval_epoch(
         f_next = f_next.to(device)
         x_next = x_next.to(device)
         pred = model(x_seq, f_next)
-        total_loss += relative_l2_loss(pred, x_next).item()
+        total_loss += loss_fn(pred, x_next).item()
     return total_loss / len(loader)
 
 
@@ -262,8 +262,8 @@ def main():
         lr=cfg["lr"],
         weight_decay=cfg["weight_decay"],
     )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=cfg["n_epochs"]
+    scheduler = torch.optim.lr_scheduler.StepLR(
+        optimizer, step_size=cfg["lr_step_size"], gamma=cfg["lr_gamma"]
     )
 
     # ── Training loop ──────────────────────────────────────────────────────────

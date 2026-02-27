@@ -118,6 +118,23 @@ def _load_raw(
     with h5py.File(path, "r") as hf:
         keys = set(hf.keys())
 
+        # ── Numeric-key format: 2D_diff-react, 2D_rdb ────────────────────────
+        # Keys are zero-padded integers ('0000', '0001', ...).
+        # Each entry: /NNNN/data  shape (N_t, Nx, Ny, d_channels)
+        # Channel 0 = u (state), Channel 1 = v (forcing).
+        num_keys = sorted(k for k in keys if k.isdigit())
+        if num_keys:
+            if n_traj is not None:
+                num_keys = num_keys[:n_traj]
+            arrays = [hf[k]["data"][:] for k in num_keys]
+            data = np.stack(arrays, axis=0)    # (N_traj, N_t, Nx, Ny, d)
+            N, T, Nx, Ny, d = data.shape
+            u = data[..., 0:1].reshape(N, T, Nx * Ny, 1)   # state
+            v = data[..., 1:2].reshape(N, T, Nx * Ny, 1)   # forcing
+            u = u[:, :, ::spatial_subsample, :]
+            v = v[:, :, ::spatial_subsample, :]
+            return u, v
+
         # ── Seed-based: most 1D PDEBench datasets ─────────────────────────────
         seed_keys = sorted(k for k in keys if k.startswith("seed="))
         if seed_keys:
@@ -146,18 +163,21 @@ def _load_raw(
             return sol, nu                     # steady-state: (N, N_spatial, d)
 
         # ── Multi-field time-dependent: u + v (diff-react, rdb) ───────────────
+        # u is the state field; v is used as the forcing field so the NAO
+        # receives a nonzero F encoding the coupled dynamics — no workaround needed.
         if "u" in keys and "v" in keys:
             sl = slice(None, n_traj)
             u  = hf["u"][sl]
             v  = hf["v"][sl]
-            uv = np.stack([u, v], axis=-1)     # (..., 2)
-            if uv.ndim == 4:                   # 1D: (N, N_t, Nx, 2)
-                pass
-            elif uv.ndim == 5:                 # 2D: (N, N_t, Nx, Ny, 2)
-                N, T, Nx, Ny, d = uv.shape
-                uv = uv.reshape(N, T, Nx * Ny, d)
-            uv = uv[:, :, ::spatial_subsample, :]
-            return uv, None
+            if u.ndim == 3:                    # 1D: (N, N_t, Nx) → add channel
+                u, v = u[..., None], v[..., None]
+            elif u.ndim == 4:                  # 2D: (N, N_t, Nx, Ny) → flatten
+                N, T, Nx, Ny = u.shape
+                u = u.reshape(N, T, Nx * Ny, 1)
+                v = v.reshape(N, T, Nx * Ny, 1)
+            u = u[:, :, ::spatial_subsample, :]
+            v = v[:, :, ::spatial_subsample, :]
+            return u, v                        # state=u, forcing=v
 
         # ── Generic: single solution field ────────────────────────────────────
         for key in ("u", "tensor", "data"):

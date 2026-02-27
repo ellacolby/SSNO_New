@@ -19,6 +19,6 @@ cd /home/ec9834/SSNO_New
 python train.py \
     --data_dir ./data \
     --dataset 2D_diff-react_NA_NA.h5 \
-    --n_traj 200 \
+    --n_traj 500 \
     --spatial_subsample 64 \
-    --n_epochs 50
+    --n_epochs 1000

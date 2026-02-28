@@ -17,8 +17,7 @@
 cd /home/ec9834/SSNO_New
 
 python train.py \
-    --data_dir ./data \
-    --dataset 2D_diff-react_NA_NA.h5 \
-    --n_traj 500 \
-    --spatial_subsample 64 \
+    --data_dir /scratch/gpfs/EHAZAN/gm3460/ns_temporal/processed \
+    --dataset ns_incom_inhom_2d_512-0_k8.h5 \
+    --spatial_subsample 8 \
     --n_epochs 1000

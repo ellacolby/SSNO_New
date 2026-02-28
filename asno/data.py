@@ -179,6 +179,21 @@ def _load_raw(
             v = v[:, :, ::spatial_subsample, :]
             return u, v                        # state=u, forcing=v
 
+        # ── NS inhomogeneous: velocity (N,T,Nx,Ny,d) + force (N,Nx,Ny,d) ────────
+        # force is constant in time → broadcast to (N, T, N_spatial, d_f)
+        if "velocity" in keys and "force" in keys:
+            sl    = slice(None, n_traj)
+            vel   = hf["velocity"][sl]   # (N, T, Nx, Ny, d)
+            force = hf["force"][sl]      # (N, Nx, Ny, d)
+            N, T, Nx, Ny, d = vel.shape
+            vel   = vel.reshape(N, T, Nx * Ny, d)[:, :, ::spatial_subsample, :]
+            force = force.reshape(N, Nx * Ny, d)[:, ::spatial_subsample, :]
+            # Broadcast constant forcing across the time axis
+            force_t = np.broadcast_to(
+                force[:, None, :, :], (N, T, vel.shape[2], d)
+            ).copy()
+            return vel, force_t          # time-dependent: (N, T, N_spatial, d)
+
         # ── Generic: single solution field ────────────────────────────────────
         for key in ("u", "tensor", "data"):
             if key in keys:

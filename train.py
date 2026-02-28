@@ -30,11 +30,12 @@ Benchmark configs (hyperparameters matched to paper's reported parameter counts)
 """
 
 import argparse
+from glob import glob
 from pathlib import Path
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import ConcatDataset, DataLoader
 
 from asno import ASNO
 from asno.data import inspect_hdf5, load_pdebench
@@ -180,8 +181,11 @@ def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train ASNO on a PDEBench dataset.")
     p.add_argument("--data_dir",  type=str, default="./data",
                    help="Directory containing HDF5 dataset files.")
-    p.add_argument("--dataset",   type=str, required=True,
+    p.add_argument("--dataset",   type=str, default=None,
                    help="Filename inside data_dir, e.g. 1D_Burgers_Sols_Nu0.1.hdf5")
+    p.add_argument("--data_glob", type=str, default=None,
+                   help="Glob pattern matching multiple HDF5 files, e.g. '/path/to/*.h5'."
+                        " Overrides --data_dir/--dataset when provided.")
     p.add_argument("--n_traj",    type=int, default=200,
                    help="Number of trajectories to load (default: 200).")
     p.add_argument("--spatial_subsample", type=int, default=1,
@@ -207,24 +211,46 @@ def main():
         if val is not None:
             cfg[key] = val
 
-    data_path = Path(args.data_dir) / args.dataset
-
     if args.inspect:
-        inspect_hdf5(str(data_path))
+        path = args.data_glob if args.data_glob else str(Path(args.data_dir) / args.dataset)
+        inspect_hdf5(path)
         return
 
     device = torch.device(cfg["device"])
     print(f"Device: {device}")
 
     # ── Dataset ───────────────────────────────────────────────────────────────
-    print(f"Loading dataset: {data_path}")
-    train_ds, test_ds, data_info = load_pdebench(
-        path             = str(data_path),
-        n_steps          = cfg["n_steps"],
-        train_frac       = 0.8,
-        n_traj           = args.n_traj,
-        spatial_subsample= args.spatial_subsample,
-    )
+    if args.data_glob:
+        paths = sorted(glob(args.data_glob))
+        if not paths:
+            raise FileNotFoundError(f"No files matched glob: {args.data_glob}")
+        print(f"Loading {len(paths)} files matching: {args.data_glob}")
+        all_train, all_test, data_info = [], [], None
+        for path in paths:
+            tr, te, data_info = load_pdebench(
+                path              = path,
+                n_steps           = cfg["n_steps"],
+                train_frac        = 0.8,
+                n_traj            = args.n_traj,
+                spatial_subsample = args.spatial_subsample,
+            )
+            all_train.append(tr)
+            all_test.append(te)
+        train_ds = ConcatDataset(all_train)
+        test_ds  = ConcatDataset(all_test)
+        print(f"Total windows: {len(train_ds):,} train / {len(test_ds):,} test")
+    else:
+        if args.dataset is None:
+            raise ValueError("Provide --dataset <filename> or --data_glob <pattern>.")
+        data_path = Path(args.data_dir) / args.dataset
+        print(f"Loading dataset: {data_path}")
+        train_ds, test_ds, data_info = load_pdebench(
+            path              = str(data_path),
+            n_steps           = cfg["n_steps"],
+            train_frac        = 0.8,
+            n_traj            = args.n_traj,
+            spatial_subsample = args.spatial_subsample,
+        )
 
     # Override model dimensions to match the loaded data
     cfg["N_spatial"] = data_info["N_spatial"]

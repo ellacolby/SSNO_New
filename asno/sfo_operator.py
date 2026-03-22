@@ -71,9 +71,12 @@ class SFOLayer(nn.Module):
 
         _mlp_hidden = mlp_hidden_dim if mlp_hidden_dim is not None else 4 * d_model
 
-        # num_filters must not exceed the axis length (Hankel matrix is seq_len×seq_len)
-        nf_row = min(num_filters, grid_w)
-        nf_col = min(num_filters, grid_h) if self.has_col_pass else 0
+        # num_filters must be strictly less than the axis length — using all
+        # eigenvectors of the Hankel matrix (full rank) causes numerical instability
+        # because the smallest eigenvectors are near-zero and produce NaN in the FFT
+        # convolution.  Capping at seq_len - 1 avoids this.
+        nf_row = min(num_filters, grid_w - 1)
+        nf_col = min(num_filters, grid_h - 1) if self.has_col_pass else 0
 
         # ── Row-wise pass: sequence length = grid_w ───────────────────────────
         self.norm_row = nn.LayerNorm(d_model)

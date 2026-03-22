@@ -57,9 +57,9 @@ class STUEncoder(nn.Module):
         self.stu = MiniSTU(
             seq_len=n_steps,
             num_filters=num_filters,
-            d_in=d_state,
-            d_out=d_state,
-            hankel_L=hankel_L,
+            input_dim=d_state,
+            output_dim=d_state,
+            use_hankel_L=hankel_L,
             use_mlp=use_mlp,
             mlp_hidden_dim=_mlp_hidden,
             mlp_num_layers=mlp_num_layers,

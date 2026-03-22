@@ -57,7 +57,7 @@ CONFIG = {
     "n_steps": 5,           # BDF history length
 
     # ── STU Encoder (explicit / temporal step) ───────────────────────────────
-    "num_filters_te": 64,       # spectral filters for temporal STU encoder
+    "num_filters_te": 4,        # spectral filters for temporal STU — must be ≤ n_steps (seq_len=5)
     "use_mlp_te": False,        # MLP after temporal spectral filtering
     "mlp_hidden_dim_te": None,  # MLP hidden size (None → 4 * d_state)
 

@@ -60,6 +60,7 @@ class STUEncoder(nn.Module):
             input_dim=d_state,
             output_dim=d_state,
             use_hankel_L=hankel_L,
+            use_flash_fft=False,
             use_mlp=use_mlp,
             mlp_hidden_dim=_mlp_hidden,
             mlp_num_layers=mlp_num_layers,

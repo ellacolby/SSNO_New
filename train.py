@@ -63,7 +63,7 @@ CONFIG = {
 
     # ── SFO Operator (implicit / spatial step) — arXiv:2601.17090 ────────────
     "num_filters_sfo": 20,      # USB rank L (paper uses 16–20)
-    "d_model_sfo": 128,         # internal channel dimension after lifting
+    "d_model_sfo": 16,         # internal channel dimension after lifting
     "n_layers_sfo": 4,          # number of SFO layers T (paper uses 4)
     "use_mlp_sfo": True,        # MLP inside each SFO layer (paper includes this)
     "mlp_hidden_dim_sfo": None, # MLP hidden size (None → 4 * d_model_sfo)
@@ -76,9 +76,9 @@ CONFIG = {
     # Defaults match the original Darcy training script.
     # Lorenz: lr=1e-2, weight_decay=1e-5, n_epochs=10000
     # AM:     lr=3e-4, weight_decay=1e-2
-    "lr": 3e-3,
+    "lr": 1e-4,
     "weight_decay": 1e-2,
-    "batch_size": 100,
+    "batch_size": 32,
     "n_epochs": 1000,
     "lr_step_size": 100,    # decay LR every this many epochs
     "lr_gamma": 0.7,        # multiplicative decay factor

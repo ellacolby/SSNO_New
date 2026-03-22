@@ -67,14 +67,19 @@ class SFOLayer(nn.Module):
         super().__init__()
         self.grid_h = grid_h
         self.grid_w = grid_w
+        self.has_col_pass = grid_h > 1
 
         _mlp_hidden = mlp_hidden_dim if mlp_hidden_dim is not None else 4 * d_model
+
+        # num_filters must not exceed the axis length (Hankel matrix is seq_len×seq_len)
+        nf_row = min(num_filters, grid_w)
+        nf_col = min(num_filters, grid_h) if self.has_col_pass else 0
 
         # ── Row-wise pass: sequence length = grid_w ───────────────────────────
         self.norm_row = nn.LayerNorm(d_model)
         self.stu_row = MiniSTU(
             seq_len=grid_w,
-            num_filters=num_filters,
+            num_filters=nf_row,
             input_dim=d_model,
             output_dim=d_model,
             use_hankel_L=hankel_L,
@@ -83,18 +88,19 @@ class SFOLayer(nn.Module):
             mlp_dropout=dropout,
         )
 
-        # ── Column-wise pass: sequence length = grid_h ────────────────────────
-        self.norm_col = nn.LayerNorm(d_model)
-        self.stu_col = MiniSTU(
-            seq_len=grid_h,
-            num_filters=num_filters,
-            input_dim=d_model,
-            output_dim=d_model,
-            use_hankel_L=hankel_L,
-            use_mlp=use_mlp,
-            mlp_hidden_dim=_mlp_hidden,
-            mlp_dropout=dropout,
-        )
+        # ── Column-wise pass: sequence length = grid_h (skipped if grid_h=1) ─
+        if self.has_col_pass:
+            self.norm_col = nn.LayerNorm(d_model)
+            self.stu_col = MiniSTU(
+                seq_len=grid_h,
+                num_filters=nf_col,
+                input_dim=d_model,
+                output_dim=d_model,
+                use_hankel_L=hankel_L,
+                use_mlp=use_mlp,
+                mlp_hidden_dim=_mlp_hidden,
+                mlp_dropout=dropout,
+            )
 
     def forward(self, v: torch.Tensor) -> torch.Tensor:
         """
@@ -110,20 +116,18 @@ class SFOLayer(nn.Module):
         v = v.view(batch, self.grid_h, self.grid_w, d)
 
         # ── Row pass: filter along columns (width axis) ───────────────────────
-        # Merge batch and grid_h so that grid_w is the sequence dimension.
         v_r = v.reshape(batch * self.grid_h, self.grid_w, d)
         v_r = v_r + self.stu_row(self.norm_row(v_r))
         v = v_r.view(batch, self.grid_h, self.grid_w, d)
 
         # ── Column pass: filter along rows (height axis) ──────────────────────
-        # Transpose so grid_h becomes the sequence dimension.
-        v = v.permute(0, 2, 1, 3)                              # (batch, grid_w, grid_h, d)
-        v_c = v.reshape(batch * self.grid_w, self.grid_h, d)
-        v_c = v_c + self.stu_col(self.norm_col(v_c))
-        v = v_c.view(batch, self.grid_w, self.grid_h, d)
+        if self.has_col_pass:
+            v = v.permute(0, 2, 1, 3)                          # (batch, grid_w, grid_h, d)
+            v_c = v.reshape(batch * self.grid_w, self.grid_h, d)
+            v_c = v_c + self.stu_col(self.norm_col(v_c))
+            v = v_c.view(batch, self.grid_w, self.grid_h, d)
+            v = v.permute(0, 2, 1, 3)                          # (batch, grid_h, grid_w, d)
 
-        # ── Restore original axis order and flatten ───────────────────────────
-        v = v.permute(0, 2, 1, 3)                              # (batch, grid_h, grid_w, d)
         return v.reshape(batch, N, d)
 
 
@@ -195,12 +199,24 @@ class SFOOperator(nn.Module):
             if sqrt_n * sqrt_n == N_spatial:
                 grid_h = grid_w = sqrt_n
             else:
-                print(
-                    f"[SFOOperator] Warning: N_spatial={N_spatial} is not a perfect "
-                    f"square; falling back to 1D spectral filtering (grid_h=1, "
-                    f"grid_w={N_spatial}). 2D separability cannot be exploited."
-                )
-                grid_h, grid_w = 1, N_spatial
+                # Find the most square-like rectangular factorization
+                best = (1, N_spatial)
+                for h in range(sqrt_n, 0, -1):
+                    if N_spatial % h == 0:
+                        best = (h, N_spatial // h)
+                        break
+                grid_h, grid_w = best
+                if grid_h == 1:
+                    print(
+                        f"[SFOOperator] Warning: N_spatial={N_spatial} has no rectangular "
+                        f"factorisation; using 1D filtering (grid_h=1, grid_w={N_spatial}). "
+                        f"Column pass will be skipped."
+                    )
+                else:
+                    print(
+                        f"[SFOOperator] N_spatial={N_spatial} → rectangular grid "
+                        f"{grid_h}×{grid_w} (separable 2D filtering)."
+                    )
 
         self.grid_h = grid_h
         self.grid_w = grid_w

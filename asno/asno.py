@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 
-from .transformer_encoder import TransformerEncoder
-from .nao import NAO
+from .stu_encoder import STUEncoder
+from .sfo_operator import SFOOperator
 
 
 class ASNO(nn.Module):
@@ -14,13 +14,42 @@ class ASNO(nn.Module):
     Its design is inspired by the implicit-explicit (IMEX) decomposition
     of the Backward Differentiation Formula (BDF):
 
-        Explicit step  →  Transformer Encoder (TE)  →  temporal extrapolation
-        Implicit step  →  Nonlocal Attention Operator (NAO) →  spatial correction
+        Explicit step  →  STU Encoder              →  temporal extrapolation
+        Implicit step  →  SFO Operator             →  spatial correction
 
     Full forward prediction:
 
         X^out_{m+1}  =  ASNO( X_m, X_{m-1}, …, X_{m-n+1},  F_{m+1} )
-                     =  NAO(  TE( X_m, …, X_{m-n+1} ),       F_{m+1} )
+                     =  SFO( STU( X_m, …, X_{m-n+1} ),      F_{m+1} )
+
+    Both components use the STU / Spectral Filtering framework:
+      - STUEncoder  : per-point spectral filtering over the temporal axis.
+                      Each of the N_spatial grid points runs its OWN independent
+                      temporal STU over its d_field-dimensional history of n_steps
+                      values.  The STU never sees across spatial locations — it
+                      only sees one point's time series at a time.
+      - SFOOperator : spectral filtering over the spatial axis.  After the
+                      temporal step produces one extrapolated value per point,
+                      the SFO mixes information across all N_spatial locations
+                      via separable 2D spectral convolution.
+
+    Per-point temporal processing
+    -----------------------------
+    Rather than flattening each snapshot to a d_state = N_spatial × d_field
+    vector (which scrambles spatial structure into an unordered bag of numbers),
+    the temporal step operates on each grid point independently:
+
+        x_seq  (batch, n_steps, N_spatial, d_field)
+            ↓  permute + merge batch and space
+        (batch × N_spatial, n_steps, d_field)   ← N_spatial independent sequences
+            ↓  STUEncoder: each point's time series processed separately
+        (batch × N_spatial, d_field)
+            ↓  reshape
+        H  (batch, N_spatial, d_field)           ← one extrapolation per point
+
+    This means the temporal STU processes d_field-dimensional tokens (= 1 for
+    most benchmarks), making it very lightweight.  All spatial interaction is
+    deferred entirely to the SFO implicit step.
 
     Spatial layout
     --------------
@@ -30,25 +59,26 @@ class ASNO(nn.Module):
         X_m  ∈  R^{N_spatial × d_field}
 
     For PDE benchmarks N_spatial is the number of grid points (e.g. 441
-    for a 21×21 Darcy mesh).  For the Lorenz ODE N_spatial = 3 (the three
-    state variables treated as "spatial" nodes) and d_field = 1.
-
-    The TE flattens each snapshot to R^{d_state} = R^{N_spatial × d_field}
-    to form the temporal token sequence; the NAO then operates over the
-    N_spatial dimension with per-node features.
+    for a 21×21 Darcy mesh).
 
     Args:
-        N_spatial   (int): Number of spatial nodes.
-        d_field     (int): State features per spatial node.
-        d_f         (int): Forcing features per spatial node.
-        d_embed     (int): TE embedding dimension.
-        n_heads     (int): TE attention heads.
-        n_layers_te (int): TE encoder depth.
-        n_steps     (int): History window length n (BDF order).
-        d_k         (int): NAO query/key dimension.
-        d_model_nao (int): NAO internal model dimension.
-        n_layers_nao(int): Number of iterative NAO attention layers (T).
-        dropout     (float): Dropout in the TE.
+        N_spatial         (int): Number of spatial nodes. Must be fixed at
+                                 construction (SFO precomputes Hilbert filters).
+        d_field           (int): State features per spatial node.
+        d_f               (int): Forcing features per spatial node.
+        num_filters_te    (int): Spectral filters for the temporal STU encoder.
+        num_filters_sfo   (int): Spectral filters (USB rank L) for each SFO
+                                 layer. Paper uses L=16–20.
+        n_steps           (int): History window length n (BDF order).
+        d_model_sfo       (int): Internal channel dimension of the SFO operator.
+        n_layers_sfo      (int): Number of SFO layers T (paper uses T=4).
+        use_mlp_te        (bool): MLP in the temporal STU encoder.
+        use_mlp_sfo       (bool): MLP inside each SFO layer. Default True.
+        mlp_hidden_dim_te (int|None): MLP hidden size for temporal encoder.
+        mlp_hidden_dim_sfo(int|None): MLP hidden size for SFO layers
+                                      (None → 4 * d_model_sfo).
+        dropout           (float): Dropout for both components.
+        hankel_L          (bool): Single-branch Hankel. Default False.
     """
 
     def __init__(
@@ -56,14 +86,17 @@ class ASNO(nn.Module):
         N_spatial: int,
         d_field: int,
         d_f: int,
-        d_embed: int = 128,
-        n_heads: int = 4,
-        n_layers_te: int = 2,
+        num_filters_te: int = 64,
+        num_filters_sfo: int = 20,
         n_steps: int = 5,
-        d_k: int = 64,
-        d_model_nao: int = 128,
-        n_layers_nao: int = 3,
+        d_model_sfo: int = 128,
+        n_layers_sfo: int = 4,
+        use_mlp_te: bool = False,
+        use_mlp_sfo: bool = True,
+        mlp_hidden_dim_te: int | None = None,
+        mlp_hidden_dim_sfo: int | None = None,
         dropout: float = 0.1,
+        hankel_L: bool = False,
     ):
         super().__init__()
         self.N_spatial = N_spatial
@@ -71,31 +104,41 @@ class ASNO(nn.Module):
         self.d_f = d_f
         self.n_steps = n_steps
 
-        d_state = N_spatial * d_field   # flattened state dimension for TE
-
-        # ── Explicit BDF step: Transformer Encoder ────────────────────────────
-        self.te = TransformerEncoder(
-            d_state=d_state,
-            d_embed=d_embed,
-            n_heads=n_heads,
-            n_layers=n_layers_te,
+        # Per-point temporal: the STU sees one point's d_field-dim time series,
+        # not the whole flattened snapshot.  d_state = d_field (e.g. 1), not
+        # N_spatial * d_field (e.g. 441).  Much smaller and faster.
+        # ── Explicit BDF step: STU Encoder (per-point temporal axis) ──────────
+        self.te = STUEncoder(
+            d_state=d_field,
             n_steps=n_steps,
+            num_filters=num_filters_te,
+            use_mlp=use_mlp_te,
+            mlp_hidden_dim=mlp_hidden_dim_te,
             dropout=dropout,
+            hankel_L=hankel_L,
         )
 
-        # ── Implicit BDF step: Nonlocal Attention Operator ────────────────────
-        # NAO receives cat(H, y_init) where H is the TE extrapolation and
-        # y_init = x_seq[:, -1] is the most recent observed state — matching
-        # the original code's y_init concatenation before the NAO forward pass.
+        # ── Implicit BDF step: SFO Operator (spatial axis) ────────────────────
+        # SFO receives cat(H, y_init) as H (d_h = d_field * 2) and F (d_f).
         # Both have d_field features per spatial point → d_h = d_field * 2.
-        self.nao = NAO(
+        # grid_h / grid_w are resolved inside SFOOperator if not supplied:
+        # perfect-square N_spatial → 2D separable; otherwise 1D fallback.
+        self.sfo = SFOOperator(
             d_h=d_field * 2,
             d_f=d_f,
-            d_k=d_k,
-            d_model=d_model_nao,
-            n_layers=n_layers_nao,
+            N_spatial=N_spatial,
+            num_filters=num_filters_sfo,
+            d_model=d_model_sfo,
+            n_layers=n_layers_sfo,
             d_out=d_field,
+            use_mlp=use_mlp_sfo,
+            mlp_hidden_dim=mlp_hidden_dim_sfo,
+            dropout=dropout,
+            hankel_L=hankel_L,
         )
+        # Expose resolved grid shape for inspection / logging
+        self.grid_h = self.sfo.grid_h
+        self.grid_w = self.sfo.grid_w
 
     def forward(
         self,
@@ -118,23 +161,28 @@ class ASNO(nn.Module):
         """
         batch = x_seq.shape[0]
 
-        # Flatten spatial dims if needed: (..., N_spatial, d_field) → (..., d_state)
-        x_flat = x_seq.reshape(batch, self.n_steps, -1)   # (batch, n_steps, d_state)
+        # Ensure 4D: (batch, n_steps, N_spatial, d_field)
+        x_4d = x_seq.reshape(batch, self.n_steps, self.N_spatial, self.d_field)
 
-        # ── Explicit step: temporal extrapolation ─────────────────────────────
-        H_flat = self.te(x_flat)                            # (batch, d_state)
-        H = H_flat.view(batch, self.N_spatial, self.d_field)  # (batch, N, d_field)
+        # ── Explicit step: per-point temporal extrapolation ───────────────────
+        # Give every spatial point its own independent temporal sequence.
+        # permute → (batch, N_spatial, n_steps, d_field)
+        # reshape → (batch × N_spatial, n_steps, d_field)  ← N_spatial separate seqs
+        x_per_point = x_4d.permute(0, 2, 1, 3).reshape(
+            batch * self.N_spatial, self.n_steps, self.d_field
+        )
+        H_per_point = self.te(x_per_point)   # (batch × N_spatial, d_field)
+        H = H_per_point.reshape(batch, self.N_spatial, self.d_field)  # (batch, N, d_field)
 
-        # ── y_init: most recent observed state (matches original code) ────────
-        # x_seq[:, -1] is X_m — the last step in the history window.
-        y_init = x_seq.reshape(batch, self.n_steps, self.N_spatial, self.d_field)[:, -1]
-        # (batch, N_spatial, d_field)
+        # ── y_init: most recent observed state ───────────────────────────────
+        # x_4d[:, -1] is X_m — the last step in the history window.
+        y_init = x_4d[:, -1]   # (batch, N_spatial, d_field)
 
         # Concatenate TE extrapolation with current state along feature dim
         H_aug = torch.cat([H, y_init], dim=-1)   # (batch, N_spatial, d_field * 2)
 
-        # ── Implicit step: spatial correction via NAO ─────────────────────────
-        X_out = self.nao(H_aug, f_next)   # (batch, N_spatial, d_field)
+        # ── Implicit step: spatial correction via SFO ─────────────────────────
+        X_out = self.sfo(H_aug, f_next)   # (batch, N_spatial, d_field)
 
         return X_out
 

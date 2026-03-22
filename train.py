@@ -11,22 +11,26 @@ Expected tensor shapes per batch:
 Usage:
     python train.py
 
-Benchmark configs (hyperparameters matched to paper's reported parameter counts):
+Temporal encoder (STUEncoder) — per-point mode
+    The temporal STU now processes each spatial grid point as an independent
+    d_field-dimensional time series (e.g. scalar for d_field=1).  It no longer
+    sees the whole flattened snapshot.  This makes num_filters_te the main
+    capacity knob for the temporal step; mlp_hidden_dim_te defaults to
+    4 * d_field which is intentionally small (spatial mixing is handled by SFO).
 
-    Darcy flow  (21×21, ~760K params)
+Benchmark configs:
+
+    Darcy flow  (21×21)
         N_spatial=441, d_field=1, d_f=1, n_steps=5
-        d_embed=128, n_heads=4, n_layers_te=3
-        d_k=32, d_model_nao=256, n_layers_nao=2
+        num_filters_te=64, num_filters_sfo=20, d_model_sfo=128, n_layers_sfo=4
 
-    Navier-Stokes (30×30, ~4.66M params)
+    Navier-Stokes (30×30)
         N_spatial=900, d_field=1, d_f=1, n_steps=5
-        d_embed=384, n_heads=4, n_layers_te=2
-        d_k=128, d_model_nao=320, n_layers_nao=4
+        num_filters_te=64, num_filters_sfo=20, d_model_sfo=256, n_layers_sfo=4
 
-    Lorenz system (~258K params)
+    Lorenz system
         N_spatial=3, d_field=1, d_f=1, n_steps=5
-        d_embed=96, n_heads=2, n_layers_te=2
-        d_k=32, d_model_nao=256, n_layers_nao=1
+        num_filters_te=32, num_filters_sfo=16, d_model_sfo=64, n_layers_sfo=2
 """
 
 import argparse
@@ -52,15 +56,18 @@ CONFIG = {
     "d_f": 1,               # forcing features per spatial node
     "n_steps": 5,           # BDF history length
 
-    # ── Transformer Encoder (explicit / temporal step) ────────────────────────
-    "d_embed": 128,         # embedding dimension
-    "n_heads": 4,           # attention heads  (d_embed must be divisible)
-    "n_layers_te": 3,       # encoder depth
+    # ── STU Encoder (explicit / temporal step) ───────────────────────────────
+    "num_filters_te": 64,       # spectral filters for temporal STU encoder
+    "use_mlp_te": False,        # MLP after temporal spectral filtering
+    "mlp_hidden_dim_te": None,  # MLP hidden size (None → 4 * d_state)
 
-    # ── Nonlocal Attention Operator (implicit / spatial step) ─────────────────
-    "d_k": 32,              # query/key dimension
-    "d_model_nao": 256,     # NAO internal model dimension
-    "n_layers_nao": 2,      # iterative attention layers (T in paper)
+    # ── SFO Operator (implicit / spatial step) — arXiv:2601.17090 ────────────
+    "num_filters_sfo": 20,      # USB rank L (paper uses 16–20)
+    "d_model_sfo": 128,         # internal channel dimension after lifting
+    "n_layers_sfo": 4,          # number of SFO layers T (paper uses 4)
+    "use_mlp_sfo": True,        # MLP inside each SFO layer (paper includes this)
+    "mlp_hidden_dim_sfo": None, # MLP hidden size (None → 4 * d_model_sfo)
+    "hankel_L": False,          # True = faster single-branch; False = more expressive
 
     # ── Regularisation ────────────────────────────────────────────────────────
     "dropout": 0.1,
@@ -266,21 +273,26 @@ def main():
 
     # ── Build model ───────────────────────────────────────────────────────────
     model = ASNO(
-        N_spatial   = cfg["N_spatial"],
-        d_field     = cfg["d_field"],
-        d_f         = cfg["d_f"],
-        d_embed     = cfg["d_embed"],
-        n_heads     = cfg["n_heads"],
-        n_layers_te = cfg["n_layers_te"],
-        n_steps     = cfg["n_steps"],
-        d_k         = cfg["d_k"],
-        d_model_nao = cfg["d_model_nao"],
-        n_layers_nao= cfg["n_layers_nao"],
-        dropout     = cfg["dropout"],
+        N_spatial          = cfg["N_spatial"],
+        d_field            = cfg["d_field"],
+        d_f                = cfg["d_f"],
+        num_filters_te     = cfg["num_filters_te"],
+        num_filters_sfo    = cfg["num_filters_sfo"],
+        n_steps            = cfg["n_steps"],
+        d_model_sfo        = cfg["d_model_sfo"],
+        n_layers_sfo       = cfg["n_layers_sfo"],
+        use_mlp_te         = cfg["use_mlp_te"],
+        use_mlp_sfo        = cfg["use_mlp_sfo"],
+        mlp_hidden_dim_te  = cfg["mlp_hidden_dim_te"],
+        mlp_hidden_dim_sfo = cfg["mlp_hidden_dim_sfo"],
+        dropout            = cfg["dropout"],
+        hankel_L           = cfg["hankel_L"],
     ).to(device)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Trainable parameters: {n_params:,}")
+    print(f"SFO spatial grid: {model.grid_h} × {model.grid_w} "
+          f"({'2D separable' if model.grid_h > 1 else '1D fallback'})")
 
     # ── Optimiser + scheduler ──────────────────────────────────────────────────
     optimizer = torch.optim.AdamW(

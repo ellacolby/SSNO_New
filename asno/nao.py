@@ -16,13 +16,13 @@ class NAOLayer(nn.Module):
 
         Attn[J ; θ_t] = σ( J W_{Qt} W_{Kt}^T J^T / √d_k )
 
-    and σ is the *linear (identity) activation* as recommended in the
-    paper (following Yu et al. 2024, Cao et al. 2021, Lu et al. 2025).
-    This means the N × N kernel is computed without softmax, giving a
-    linear attention map that is bilinear in the spatial features.
+    and σ is softmax applied row-wise over the N spatial positions.
+    Note: the docstring originally stated linear (identity) activation
+    following the paper's recommendation, but the implementation uses
+    softmax to match the original codebase behaviour and ensure bounded
+    attention weights.
 
-    A LayerNorm is applied after the residual addition to stabilise
-    training in the absence of a normalising activation.
+    A LayerNorm is applied after the residual addition for stability.
 
     Args:
         d_model (int): Feature dimension of J at this layer.

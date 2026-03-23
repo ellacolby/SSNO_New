@@ -307,6 +307,7 @@ def main():
     # ── Training loop ──────────────────────────────────────────────────────────
     best_test_loss = float("inf")
 
+    torch.autograd.set_detect_anomaly(True)
     for epoch in range(1, cfg["n_epochs"] + 1):
         train_loss = train_epoch(
             model, train_loader, optimizer, device, cfg["grad_clip"]

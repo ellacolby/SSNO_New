@@ -321,9 +321,9 @@ def main():
         if epoch % 10 == 0 or epoch == 1:
             print(
                 f"Epoch {epoch:4d}/{cfg['n_epochs']}  |  "
-                f"Train {train_loss:.4f}  |  "
-                f"Test {test_loss:.4f}  |  "
-                f"Best {best_test_loss:.4f}"
+                f"Train {train_loss:.6f}  |  "
+                f"Test {test_loss:.6f}  |  "
+                f"Best {best_test_loss:.6f}"
             )
 
     print(f"\nDone. Best test loss: {best_test_loss:.4f}")

@@ -54,6 +54,17 @@ class STUEncoder(nn.Module):
 
         _mlp_hidden = mlp_hidden_dim if mlp_hidden_dim is not None else 4 * d_state
 
+        # Cap num_filters to n_steps // 2 for the same reason as SFOLayer:
+        # the Hankel matrix eigenvectors beyond ~50% of sequence length have
+        # near-zero eigenvalues that cause NaN in the FFT convolution.
+        safe_filters = max(1, n_steps // 2)
+        if num_filters > safe_filters:
+            print(
+                f"[STUEncoder] num_filters={num_filters} capped to {safe_filters} "
+                f"(= n_steps // 2 = {n_steps} // 2) for Hankel stability."
+            )
+            num_filters = safe_filters
+
         self.stu = MiniSTU(
             seq_len=n_steps,
             num_filters=num_filters,

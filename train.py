@@ -54,7 +54,8 @@ CONFIG = {
     "N_spatial": 441,       # spatial nodes  (e.g. 21×21 for Darcy)
     "d_field": 1,           # state features per spatial node
     "d_f": 1,               # forcing features per spatial node
-    "n_steps": 5,           # BDF history length
+    "n_steps": 10,          # BDF history length — must be ≥ 2 * num_filters_te
+                            # (n_steps=10 allows up to 5 safe Hankel filters)
     "temporal_stride": 10,  # frames between history steps — stride>1 prevents the
                             # trivial "copy last state" solution on fine-dt datasets
                             # (e.g. NS with 1000 steps).  stride=10 makes Δstate

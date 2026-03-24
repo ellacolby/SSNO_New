@@ -55,6 +55,10 @@ CONFIG = {
     "d_field": 1,           # state features per spatial node
     "d_f": 1,               # forcing features per spatial node
     "n_steps": 5,           # BDF history length
+    "temporal_stride": 10,  # frames between history steps — stride>1 prevents the
+                            # trivial "copy last state" solution on fine-dt datasets
+                            # (e.g. NS with 1000 steps).  stride=10 makes Δstate
+                            # 10× larger so the trivial baseline is 100× worse.
 
     # ── STU Encoder (explicit / temporal step) ───────────────────────────────
     "num_filters_te": 4,        # spectral filters for temporal STU — must be ≤ n_steps (seq_len=5)
@@ -197,6 +201,9 @@ def _parse_args() -> argparse.Namespace:
                    help="Number of trajectories to load (default: 200).")
     p.add_argument("--spatial_subsample", type=int, default=1,
                    help="Keep every n-th spatial point (default: 1 = no subsampling).")
+    p.add_argument("--temporal_stride", type=int, default=None,
+                   help="Frames between history steps (default: from CONFIG)."
+                        " Set >1 to prevent trivial copy-last-state solution.")
     p.add_argument("--inspect",   action="store_true",
                    help="Print HDF5 file structure and exit.")
     # Optional CONFIG overrides
@@ -213,7 +220,7 @@ def main():
     cfg    = dict(CONFIG)   # copy so we can mutate
 
     # Apply CLI overrides
-    for key in ("n_steps", "n_epochs", "batch_size", "lr", "checkpoint_path"):
+    for key in ("n_steps", "n_epochs", "batch_size", "lr", "checkpoint_path", "temporal_stride"):
         val = getattr(args, key)
         if val is not None:
             cfg[key] = val
@@ -240,6 +247,7 @@ def main():
                 train_frac        = 0.8,
                 n_traj            = args.n_traj,
                 spatial_subsample = args.spatial_subsample,
+                temporal_stride   = cfg["temporal_stride"],
             )
             all_train.append(tr)
             all_test.append(te)
@@ -257,6 +265,7 @@ def main():
             train_frac        = 0.8,
             n_traj            = args.n_traj,
             spatial_subsample = args.spatial_subsample,
+            temporal_stride   = cfg["temporal_stride"],
         )
 
     # Override model dimensions to match the loaded data

@@ -43,6 +43,7 @@ def load_pdebench(
     train_frac: float = 0.8,
     n_traj: int | None = 200,
     spatial_subsample: int = 1,
+    temporal_stride: int = 1,
 ) -> tuple[TensorDataset, TensorDataset, dict]:
     """Load a PDEBench HDF5 file and return (train_dataset, test_dataset, info).
 
@@ -65,6 +66,11 @@ def load_pdebench(
         train_frac       : fraction of windows used for training
         n_traj           : max trajectories to load (None = all)
         spatial_subsample: keep every n-th spatial point (1 = no subsampling)
+        temporal_stride  : step between frames in a history window.
+                           stride=1  → consecutive frames (default, fine dt).
+                           stride=10 → every 10th frame — state changes are
+                           10x larger so the trivial "copy last state" baseline
+                           is 100x worse, forcing the model to learn real dynamics.
     """
     u, f = _load_raw(path, n_traj, spatial_subsample)
     is_steady = (u.ndim == 3)   # (N, N_spatial, d) for Darcy, 4-D otherwise
@@ -72,7 +78,7 @@ def load_pdebench(
     if is_steady:
         x_seqs, f_nexts, x_nexts = _windows_steady(u, f, n_steps)
     else:
-        x_seqs, f_nexts, x_nexts = _windows_timedep(u, f, n_steps)
+        x_seqs, f_nexts, x_nexts = _windows_timedep(u, f, n_steps, temporal_stride)
 
     N         = x_seqs.shape[0]
     n_train   = int(N * train_frac)
@@ -218,26 +224,40 @@ def _windows_timedep(
     u: np.ndarray,
     f: np.ndarray | None,
     n_steps: int,
+    temporal_stride: int = 1,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Vectorised sliding-window extraction from (N_traj, N_t, N_spatial, d)."""
-    N_traj, N_t, N_spatial, d = u.shape
-    T_win   = N_t - n_steps                         # windows per trajectory
+    """Vectorised sliding-window extraction from (N_traj, N_t, N_spatial, d).
 
-    # win_idx[w, s] = w + s  →  index into time axis
-    win_idx = np.arange(n_steps)[None, :] + np.arange(T_win)[:, None]
+    With temporal_stride S each window spans S * n_steps frames:
+        x_seq  = [u[t], u[t+S], u[t+2S], ..., u[t+(n_steps-1)*S]]
+        x_next = u[t + n_steps*S]
+
+    A larger stride makes consecutive states differ more, preventing the model
+    from collapsing to the trivial "copy last state" solution.
+    """
+    N_traj, N_t, N_spatial, d = u.shape
+    S     = temporal_stride
+    span  = n_steps * S                              # frames spanned per window
+    T_win = N_t - span                               # valid window start positions
+
+    win_starts  = np.arange(T_win)                   # (T_win,)
+    step_offsets = np.arange(n_steps) * S            # (n_steps,)
+    win_idx      = win_starts[:, None] + step_offsets[None, :]  # (T_win, n_steps)
+    next_idx     = win_starts + span                 # (T_win,)
 
     # u[:, win_idx] → (N_traj, T_win, n_steps, N_spatial, d)
     x_seqs  = u[:, win_idx].reshape(-1, n_steps, N_spatial, d).astype(np.float32)
-    x_nexts = u[:, n_steps:].reshape(-1, N_spatial, d).astype(np.float32)
+    x_nexts = u[:, next_idx].reshape(-1, N_spatial, d).astype(np.float32)
 
     if f is not None:
-        f_nexts = f[:, n_steps:].reshape(-1, N_spatial, d).astype(np.float32)
+        f_nexts = f[:, next_idx].reshape(-1, N_spatial, d).astype(np.float32)
     else:
         # No external forcing: use the last observed state in each window as
         # the NAO forcing field.  X_out = K @ F, so F must be nonzero for the
         # model to produce any nonzero prediction.  X_m is the natural choice —
         # it encodes the current spatial structure driving the implicit correction.
-        f_nexts = u[:, n_steps - 1 : N_t - 1].reshape(-1, N_spatial, d).astype(np.float32)
+        last_in_win = win_starts + (n_steps - 1) * S
+        f_nexts = u[:, last_in_win].reshape(-1, N_spatial, d).astype(np.float32)
 
     return x_seqs, f_nexts, x_nexts
 

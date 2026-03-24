@@ -62,7 +62,7 @@ CONFIG = {
                             # 10× larger so the trivial baseline is 100× worse.
 
     # ── STU Encoder (explicit / temporal step) ───────────────────────────────
-    "num_filters_te": 4,        # spectral filters for temporal STU — must be ≤ n_steps (seq_len=5)
+    "num_filters_te": 4,        # spectral filters for temporal STU — must be ≤ n_steps // 2 (= 5 safe filters for n_steps=10)
     "use_mlp_te": False,        # MLP after temporal spectral filtering
     "mlp_hidden_dim_te": None,  # MLP hidden size (None → 4 * d_state)
 

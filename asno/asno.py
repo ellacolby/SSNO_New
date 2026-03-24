@@ -199,15 +199,25 @@ class ASNO(nn.Module):
         paper (Section 4).  Errors accumulate over successive rollouts;
         ASNO's separable architecture is designed to keep this growth small.
 
+        ⚠️  Temporal stride:  if the model was trained with temporal_stride=S,
+        each rollout step predicts S original time-steps ahead.  x_init_seq
+        must therefore contain n_steps frames already spaced S apart (i.e. the
+        same strided representation used during training), and x_true_seq /
+        f_seq should be indexed at every S-th original frame.  Passing
+        consecutive (stride-1) frames to a stride-S model will produce
+        incorrect predictions.
+
         Args:
             x_init_seq: (batch, n_steps, N_spatial, d_field)
-                        Seed history (the first n_steps ground-truth states).
+                        Seed history — n_steps frames spaced temporal_stride
+                        apart, ordered oldest-to-newest.
             f_seq:      (batch, T_future, N_spatial, d_f)
-                        Forcing fields for every future time step.
+                        Forcing fields for every future prediction step
+                        (one per stride unit, not per original time-step).
 
         Returns:
             preds: (batch, T_future, N_spatial, d_field)
-                   Predicted states for all T_future steps.
+                   Predicted states for all T_future stride-steps.
         """
         preds = []
         x_window = x_init_seq   # (batch, n_steps, N_spatial, d_field)

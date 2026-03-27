@@ -13,12 +13,14 @@
 #SBATCH --mail-user=ec9834@princeton.edu
 
 
+# ── Environment ───────────────────────────────────────────────────────────────
+module load anaconda3/2024.10
+pip install tqdm h5py numpy einops --quiet
+
 # ── Run ───────────────────────────────────────────────────────────────────────
 cd /home/ec9834/SSNO_New
 export PYTHONPATH="/home/ec9834/flash-stu-2:$PYTHONPATH"
 mkdir -p logs
-
-pip install tqdm h5py numpy einops --quiet
 
 python train.py \
     --data_glob "/home/ec9834/combined_N250_k8.h5" \

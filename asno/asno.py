@@ -181,8 +181,13 @@ class ASNO(nn.Module):
         # Concatenate TE extrapolation with current state along feature dim
         H_aug = torch.cat([H, y_init], dim=-1)   # (batch, N_spatial, d_field * 2)
 
-        # ── Implicit step: spatial correction via SFO ─────────────────────────
-        X_out = self.sfo(H_aug, f_next)   # (batch, N_spatial, d_field)
+        # ── Implicit step: residual spatial correction via SFO ────────────────
+        # The SFO predicts the *delta* (x_next - y_init), not the full state.
+        # Adding y_init back as a residual forces the model to learn what changes
+        # rather than learning to copy y_init — which would be a trivial shortcut
+        # since x_next ≈ y_init for smooth trajectories.
+        delta = self.sfo(H_aug, f_next)          # (batch, N_spatial, d_field)
+        X_out = y_init + delta                    # residual: predict the change
 
         return X_out
 

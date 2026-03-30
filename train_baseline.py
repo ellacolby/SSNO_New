@@ -51,7 +51,8 @@ CONFIG = {
     "d_field": 1,           # state features per spatial node
     "d_f": 1,               # forcing features per spatial node
     "n_steps": 5,           # BDF history length
-    "temporal_stride": 10,  # must match train.py to ensure fair comparison
+    "temporal_stride": 50,  # must match train.py to ensure fair comparison
+    "lr": 1e-3,             # reduced from 3e-3 to reduce oscillation
 
     # ── Transformer Encoder (explicit / temporal step) ────────────────────────
     "d_embed": 128,         # embedding dimension

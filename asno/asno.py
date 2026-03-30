@@ -124,7 +124,7 @@ class ASNO(nn.Module):
         # grid_h / grid_w are resolved inside SFOOperator if not supplied:
         # perfect-square N_spatial → 2D separable; otherwise 1D fallback.
         self.sfo = SFOOperator(
-            d_h=d_field * 2,
+            d_h=d_field,
             d_f=d_f,
             N_spatial=N_spatial,
             num_filters=num_filters_sfo,
@@ -178,15 +178,14 @@ class ASNO(nn.Module):
         # x_4d[:, -1] is X_m — the last step in the history window.
         y_init = x_4d[:, -1]   # (batch, N_spatial, d_field)
 
-        # Concatenate TE extrapolation with current state along feature dim
-        H_aug = torch.cat([H, y_init], dim=-1)   # (batch, N_spatial, d_field * 2)
-
         # ── Implicit step: residual spatial correction via SFO ────────────────
-        # The SFO predicts the *delta* (x_next - y_init), not the full state.
-        # Adding y_init back as a residual forces the model to learn what changes
-        # rather than learning to copy y_init — which would be a trivial shortcut
-        # since x_next ≈ y_init for smooth trajectories.
-        delta = self.sfo(H_aug, f_next)          # (batch, N_spatial, d_field)
+        # The SFO receives only H (temporal extrapolation) and f_next — NOT
+        # y_init.  Giving y_init to the SFO creates a trivial shortcut: the SFO
+        # can simply learn to output (x_next - y_init) by reading y_init directly
+        # from its input, which requires no understanding of the dynamics.
+        # Instead, y_init is added as a residual OUTSIDE the SFO so the model
+        # must use the temporal extrapolation H to predict the change.
+        delta = self.sfo(H, f_next)               # (batch, N_spatial, d_field)
         X_out = y_init + delta                    # residual: predict the change
 
         return X_out

@@ -56,10 +56,10 @@ CONFIG = {
     "d_f": 1,               # forcing features per spatial node
     "n_steps": 10,          # BDF history length — must be ≥ 2 * num_filters_te
                             # (n_steps=10 allows up to 5 safe Hankel filters)
-    "temporal_stride": 10,  # frames between history steps — stride>1 prevents the
+    "temporal_stride": 50,  # frames between history steps — stride>1 prevents the
                             # trivial "copy last state" solution on fine-dt datasets
-                            # (e.g. NS with 1000 steps).  stride=10 makes Δstate
-                            # 10× larger so the trivial baseline is 100× worse.
+                            # (e.g. NS with 1000 steps).  stride=50 makes Δstate
+                            # 50× larger so the trivial baseline is 2500× worse.
 
     # ── STU Encoder (explicit / temporal step) ───────────────────────────────
     "num_filters_te": 4,        # spectral filters for temporal STU — must be ≤ n_steps // 2 (= 5 safe filters for n_steps=10)
